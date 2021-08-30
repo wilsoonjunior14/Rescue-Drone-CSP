@@ -66,45 +66,60 @@ DRONE(id) =
 ---------------------------------
 -- The controller of the drone --
 ---------------------------------
-FINDER(id) =
-        out!SWITCHON.OFF -> in!TAKEOFF.LOOKING -> FINDER(id)
-        []
-        out!FOUND.LOOKING -> in!LAND.LOOKING -> FINDER(id)
-        []
-        out!DELIVER.DELIVERING -> in!TAKEOFF.RETURNING -> FINDER(id)
-        []
-        out!ORIGIN.OFF -> in!SWITCHOFF.OFF -> FINDER(id)
 
-FINDER'(id) =
+FINDER(id) =
         out?action?state -> FINDER_DO_ACTION(id, state, action)
             
 
 FINDER_DO_ACTION(id, state, action) = 
             if action == SWITCHON and state == OFF
             then
-                in.TAKEOFF.LOOKING -> in.MOVING.LOOKING -> FINDER'(id)
+                in.TAKEOFF.LOOKING -> in.MOVING.LOOKING -> FINDER(id)
             else if action == FOUND and state == LOOKING
             then
-                in.LAND.LOOKING -> FINDER'(id)
+                in.LAND.LOOKING -> FINDER(id)
             else if action == DELIVER and state == DELIVERING
             then
-                in.TAKEOFF.RETURNING -> in.LAND.RETURNING -> in.MOVING.RETURNING -> FINDER'(id)
+                in.TAKEOFF.RETURNING -> in.LAND.RETURNING -> in.MOVING.RETURNING -> FINDER(id)
             else if action == ORIGIN and state == OFF
             then
-                in.SWITCHOFF.OFF -> FINDER'(id)
+                in.SWITCHOFF.OFF -> FINDER(id)
             else
-                FINDER'(id)
+                FINDER(id)
 
--- Creates FINDER' reading out values from buffer
--- Creates DRONE' reading out values and making input operations
--- [x] FINDER` always should read messages from buffer (OUT?X)
--- [x] creates datatype that represents LOOKING, RETURNING into FINDER, init state, read operations from buffer
--- [x] change the exclamation for dot into FINDER
--- [x] insert states transition in FINDER
+PLATFORM = (FINDER(1) ||| DRONE(1)) [|{|in, out|}|] BUFFER(<>)
 
-SYSTEM = (FINDER'(1) ||| DRONE(1)) [|{|in, out|}|] BUFFER(<>)
+-- Asserts for Drone (Hardware) --
+assert DRONE(1) :[deadlock free]
+assert DRONE(1) :[deterministic]
+assert DRONE(1) :[livelock free]
 
+-- Asserts for Finder (Software) --
+assert FINDER(1) :[deadlock free]
+assert FINDER(1) :[deterministic]
+assert FINDER(1) :[livelock free]
 
-assert SYSTEM :[deadlock free]
-assert SYSTEM :[deterministic]
-assert SYSTEM :[livelock free]
+-- Assert for Finder' which contains same behavior of original Finder
+FINDER'(id) = out.SWITCHON.OFF -> in.TAKEOFF.LOOKING -> in.MOVING.LOOKING -> FINDER'(id)
+
+assert FINDER(1) [T= FINDER'(1)
+
+-- Assert for Finder'' which contains many delays events represented by wait?TOP
+FINDER''(id) = out.SWITCHON.OFF -> wait?TOP -> wait?TOP -> in.TAKEOFF.LOOKING -> wait?TOP -> wait?TOP -> in.MOVING.LOOKING -> FINDER''(id)
+
+assert FINDER(1) [T= FINDER''(1)
+
+-- Assert for Finder''' which contains incorrect behavior comparated with original model
+FINDER'''(id) = out.SWITCHON.OFF -> in.LAND.LOOKING -> in.TAKEOFF.LOOKING -> in.MOVING.LOOKING -> FINDER'''(id)
+
+-- Assert for Finder'''' which contains deadlock state
+assert FINDER(1) [T= FINDER'''(1)
+FINDER''''(id) =
+        out?action?state -> 
+            if action == SWITCHON and state == OFF
+            then
+                in.TAKEOFF.LOOKING -> in.MOVING.LOOKING -> FINDER(id)
+            else 
+                STOP
+
+assert FINDER''''(1) :[deadlock free]

@@ -1,0 +1,110 @@
+-----------------------------------------------
+----------- Drone Specification ---------------
+-- Author: Francisco Wilson Rodrigues Junior --
+------------- Date: 01/08/2021 ---------------- 
+-----------------------------------------------
+
+----------------------
+-- Global Variables --
+----------------------
+datatype ONOFF = on | off
+datatype STATUS = available | unavailable
+datatype MESSAGE = SWITCHON | SWITCHOFF | TAKEOFF | LAND | ORIGIN | FOUND | MOVING | DELIVER
+datatype FINDER_STATES = OFF | LOOKING | DELIVERING | RETURNING | INIT
+
+IDS = {1}
+VALUES = {1..2}
+
+WAIT_TIME = IDS
+LINEAR_VELOCITY = {2}
+
+channel switch : IDS.ONOFF
+channel origin, land, found : IDS
+channel takeoff, looking : IDS
+channel move : IDS.LINEAR_VELOCITY
+channel delivery, returning, turnBack : IDS
+
+channel wait : IDS.WAIT_TIME
+
+channel in, out : MESSAGE.FINDER_STATES
+
+------------------------------------------------------------
+-- Mechanism of communication between drone and controller --
+------------------------------------------------------------
+BUFFER(<>) = in?x -> BUFFER(<x>)
+BUFFER(<x>^tr) = 
+        in?y -> BUFFER(<x>^tr^<y>)
+        []
+        out!x -> BUFFER(tr)
+
+---------------------------------
+-------- The drone system -------
+---------------------------------
+DRONE(id) = 
+        switch.id.on -> in.SWITCHON.OFF -> DRONE(id)
+        []
+        out.TAKEOFF.LOOKING -> takeoff.id -> looking.id -> DRONE(id)
+        []
+        out.TAKEOFF.RETURNING -> takeoff.id -> returning.id -> turnBack.id -> DRONE(id)
+        []
+        out.LAND.LOOKING -> land.id -> delivery.id -> wait.id?TOP -> in.DELIVER.DELIVERING -> DRONE(id) 
+        [] 
+        out.LAND.RETURNING -> land.id -> wait.id?TOP -> DRONE(id)
+        []
+        out.SWITCHOFF.OFF -> switch.id.off -> DRONE(id)
+        []
+        out.MOVING?actualState -> move.id?lv -> 
+            if actualState == RETURNING
+            then 
+                origin.id -> in.ORIGIN.OFF -> DRONE(id)
+            else if actualState == LOOKING
+            then
+                found.id -> in.FOUND.LOOKING -> DRONE(id)
+            else
+                DRONE(id)
+
+---------------------------------
+-- The controller of the drone --
+---------------------------------
+FINDER(id) =
+        out!SWITCHON.OFF -> in!TAKEOFF.LOOKING -> FINDER(id)
+        []
+        out!FOUND.LOOKING -> in!LAND.LOOKING -> FINDER(id)
+        []
+        out!DELIVER.DELIVERING -> in!TAKEOFF.RETURNING -> FINDER(id)
+        []
+        out!ORIGIN.OFF -> in!SWITCHOFF.OFF -> FINDER(id)
+
+FINDER'(id) =
+        out?action?state -> FINDER_DO_ACTION(id, state, action)
+            
+
+FINDER_DO_ACTION(id, state, action) = 
+            if action == SWITCHON and state == OFF
+            then
+                in.TAKEOFF.LOOKING -> in.MOVING.LOOKING -> FINDER'(id)
+            else if action == FOUND and state == LOOKING
+            then
+                in.LAND.LOOKING -> FINDER'(id)
+            else if action == DELIVER and state == DELIVERING
+            then
+                in.TAKEOFF.RETURNING -> in.LAND.RETURNING -> in.MOVING.RETURNING -> FINDER'(id)
+            else if action == ORIGIN and state == OFF
+            then
+                in.SWITCHOFF.OFF -> FINDER'(id)
+            else
+                FINDER'(id)
+
+-- Creates FINDER' reading out values from buffer
+-- Creates DRONE' reading out values and making input operations
+-- [x] FINDER` always should read messages from buffer (OUT?X)
+-- [x] creates datatype that represents LOOKING, RETURNING into FINDER, init state, read operations from buffer
+-- [x] change the exclamation for dot into FINDER
+-- [x] insert states transition in FINDER
+
+SYSTEM = (FINDER'(1) ||| DRONE(1)) [|{|in, out|}|] BUFFER(<>)
+
+
+assert SYSTEM :[deadlock free]
+assert SYSTEM :[deterministic]
+assert SYSTEM :[livelock free]
